@@ -6,8 +6,8 @@ This is a temporary script file.
 """
 
 from bs4 import BeautifulSoup
-from datetime import datetime
 import os
+import re
 import pandas as pd
 #import matplotlib.pyplot as plt
 import matplotlib.pylab as plt
@@ -15,76 +15,39 @@ import seaborn as sns
 import numpy as np
 import matplotlib.dates as mdates
 
+
+
+total = []
+p = re.compile('\d{12}')
+v = re.compile('\d')
+
 # Use seaborn style defaults and set the default figure size
 sns.set(rc={'figure.figsize':(11, 4)})
 
-# Updated: 9/12/2019 2:01:29 AM GMT
-test_file = 'C:/data/outages/MIoutages201912040810.html'
 
-def getDateTime(fh,fname):
-    output = []
-    try:
-        html = open(fname).read()
-        soup = BeautifulSoup(html,features="lxml")
-        table = soup.find("table")
-        raw_text = soup.get_text()
-        data = raw_text.splitlines()
-        output_rows = []
-        for table_row in table.findAll('tr'):
-            columns = table_row.findAll('td')
-            output_row = []
-            for column in columns:
-                output_row.append(column.text)
-            output_rows.append(output_row)
-    
+def parse_html_file(fname):
+    m = p.search(fname)
+    dt_str = str(m.group(0))
+    html = open(fname).read()
+    soup = BeautifulSoup(html,features="html.parser")
+    table = soup.find("table")
+    for table_row in table.findAll('tr'):
+        row = []
+        columns = table_row.findAll('td')
 
-        for d in range(0,(len(data))):
-            if 'Updated' in data[d]:
-                #print (data[d])
-                dt_line = data[d]
-                dtime = dt_line[9:]
-                dt = datetime.strptime(dtime,'%m/%d/%Y %I:%M:%S %p GMT')
-                #print(dt)
-    
-        for r in range(0,len(output_rows)):
-            this_row = output_rows[r]
-            if len(this_row) > 0:
-                county = this_row[0]
-                tracked = this_row[1].replace(',', '')
-                outages = this_row[2].replace(',', '')
-                if int(outages) > -1:
-                    text = str(dt) + ',' + county + ',' + counties_dict[county] + ',' + tracked + ',' + outages + '\n'
-                    #print(text)
-                    fh.write(text)
-        return output
-    except:
-        pass
+        row.append(pd.to_datetime(dt_str))
+        for column in columns:
+            if len(column.text) > 0:
+                mv = v.search(column.text)
+                if mv is not None:
+                    row.append(locale.atoi(column.text))
+                else:
+                    row.append(column.text)
+                    if column.text in counties_dict:
+                        row.append(counties_dict[column.text])
 
-try:
-    os.listdir('/usr')
-    base_dir = '/data'
-except:
-    base_dir = 'C:/data'
-
-
-process_files = False
-src_dir = os.path.join(base_dir,'outages')
-
-fileList = os.listdir(src_dir)
-outFile = os.path.join(base_dir,'outages4.txt')
-
-if process_files:
-    with open(outFile,'a') as fout:
-        for item in fileList:
-            if 'html' in item:
-                #print(os.path.join(src_dir,item))
-                output = getDateTime(fout,os.path.join(src_dir,item))
-            else:
-                pass
-else:
-    pass
-        #thefile.write("%s\n" % item)
-
+        total.append(row)
+    return
 
 counties_dict = {'Allegan': 'grr',
  'Alpena': 'apx',
@@ -155,20 +118,46 @@ counties_dict = {'Allegan': 'grr',
 
 
 
-D = None
-D = pd.read_csv(outFile, header=0, index_col=['time'],parse_dates=True,names=['time', 'county', 'cwa', 'tracked', 'outages'])
-D['ratio'] = (D.outages/D.tracked) * 100
-D['log'] = np.log10(D.outages)
+try:
+    os.listdir('/usr')
+    base_dir = '/data'
+except:
+    base_dir = 'C:/data/events/20201115/outages'
 
+process_files = True
+
+src_dir = base_dir
+fileList = os.listdir(src_dir)
+
+
+if __name__ == "__main__":
+    # execute only if run as a script
+
+    import locale
+    locale.setlocale( locale.LC_ALL, 'en_US.UTF-8' ) 
+    if process_files:
+        for item in fileList:
+            if 'html' in item:
+                parse_html_file(os.path.join(base_dir,item))
+
+
+# =============================================================================
+# 
+# 
+D = None
+D = pd.DataFrame(total, columns=['time', 'county', 'cwa', 'tracked', 'outages'])
+D.set_index(list(D)[0], inplace=True)
+D.dropna(inplace=True)
+D['ratio'] = (D.outages/D.tracked) * 100
+#D['log'] = np.log10(D.outages)
 F = D.replace([np.inf, -np.inf], 0)
-# Jul 20,2019 = 201
-# Sep 11,2019 = 254
-# Nov. 25, 2019 = 329
-# Nov 30, 2019 = 334 ... 334-338
-E = F[(F.index.dayofyear > 329) & (F.index.dayofyear <334)]
+
+# # # Nov 15, 2020 = 320
+# # #E = F[(F.index.dayofyear > 329) & (F.index.dayofyear <334)]
+E = F[(F.index.dayofyear >= 320) & (F.index.dayofyear <= 322)]
 df_e = E.resample('H').sum()
 df_e_outages = df_e['outages']
-
+# # 
 GRR = E[E.cwa == 'grr']
 df_grr = GRR.resample('H').sum()
 df_grr_outages = df_grr['outages']
@@ -186,16 +175,24 @@ df_iwx = IWX.resample('H').sum()
 df_iwx_outages = df_iwx['outages']
 
 fig, ax = plt.subplots(nrows = 1, ncols = 1)
-ax.plot(df_dtx_outages,color='b',linewidth=1,label='DTX')
-ax.plot(df_grr_outages,color='r',linewidth=1.75,label='GRR')
-#ax.plot(df_apx_outages,color='g',label='APX')
-#ax.plot(df_iwx_outages,color='m',label='IWX')
-ax.plot(df_e_outages,color='black', linewidth=2.5,ls='--',label='ALL')
+ax.plot(df_e_outages,color='black', linewidth=2.5,ls='--',label='ALL', zorder=4)
+ax.plot(df_grr_outages,color='r',linewidth=1.75,label='GRR', zorder=3)
+ax.plot(df_dtx_outages,color='b',linewidth=1,label='DTX', zorder=2)
+ax.plot(df_apx_outages,color='g',label='APX', zorder=1)
+ax.plot(df_iwx_outages,color='m',label='IWX')
 ax.legend()
 plt.ylabel('Outages')
-myFmt = mdates.DateFormatter('%Y-%m-%d\n%H UTC')
+myFmt = mdates.DateFormatter('%d%b%y\n%HZ')
 myFmt2 = mdates.DateFormatter('%H UTC')
 ax.xaxis.set_major_formatter(myFmt)
 ax.xaxis.grid(True, which='minor')
 ax.xaxis.set_minor_formatter(myFmt2)
-plt.title('Consumers Outages')
+plt.title('Customer Outages')
+
+image_dst_path = 'C:\data\outages-20201115.png'
+plt.savefig(image_dst_path,format='png')
+plt.show()
+plt.close()
+
+
+# =============================================================================
